@@ -972,12 +972,24 @@
                 // Try to enable torch/flash
                 const videoTrack = cameraStream.getVideoTracks()[0];
                 let torchEnabled = false;
+
+                // Some devices need a moment after the video starts before the torch can be activated
+                await new Promise(resolve => setTimeout(resolve, 500));
+
                 try {
-                    await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
-                    torchEnabled = true;
+                    // Check if the track actually supports torch before applying
+                    const capabilities = videoTrack.getCapabilities && videoTrack.getCapabilities();
+                    if (capabilities && capabilities.torch) {
+                        await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                        torchEnabled = true;
+                    } else {
+                        // Fallback attempt for browsers that don't report capabilities properly
+                        await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                        torchEnabled = true;
+                    }
                 } catch (e) {
                     console.warn('Torch not available:', e);
-                    showStatus('Flash/torch is not available on this device. Results may be less accurate. Ensure a bright light is near your fingertip.', 'info');
+                    showStatus('Flash/torch is not available on this device or browser. Results may be less accurate. Ensure a bright light is near your fingertip.', 'info');
                 }
 
                 dom.videoOverlayText.textContent = torchEnabled
