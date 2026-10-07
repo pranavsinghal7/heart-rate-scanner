@@ -975,14 +975,43 @@
             resetCameraUI();
 
             try {
-                // Request rear camera
+                // Step 1: Request basic rear camera to trigger permission prompt (populates device labels)
+                let tempStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                
+                // Step 2: Enumerate devices now that we have permissions and labels
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(d => d.kind === 'videoinput');
+                
+                let mainCameraId = null;
+                // Find all cameras with 'back' or 'environment' in the label
+                const backCameras = videoDevices.filter(d => 
+                    d.label.toLowerCase().includes('back') || 
+                    d.label.toLowerCase().includes('environment')
+                );
+                
+                if (backCameras.length > 0) {
+                    // The primary main camera is almost always the FIRST one in the list (e.g., "camera 0")
+                    mainCameraId = backCameras[0].deviceId;
+                } else if (videoDevices.length > 1) {
+                    // Fallback if labels are empty: usually the second camera is the main rear
+                    mainCameraId = videoDevices[1].deviceId;
+                }
+
+                // Stop the temporary stream
+                tempStream.getTracks().forEach(t => t.stop());
+
+                // Step 3: Request the exact main camera by deviceId
+                // Passing the explicit deviceId is required on some Androids for the Torch API to work
                 let videoConstraints = {
-                    // Using ideal: 'environment' allows the browser to pick the main rear camera,
-                    // avoiding the issue where deviceId forces it to select a macro or ultrawide lens.
-                    facingMode: { ideal: 'environment' },
                     width: { ideal: 320 },
                     height: { ideal: 240 },
                 };
+                
+                if (mainCameraId) {
+                    videoConstraints.deviceId = { exact: mainCameraId };
+                } else {
+                    videoConstraints.facingMode = { ideal: 'environment' };
+                }
 
                 cameraStream = await navigator.mediaDevices.getUserMedia({
                     video: videoConstraints,
