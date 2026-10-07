@@ -977,22 +977,12 @@
             try {
                 // Request rear camera
                 let videoConstraints = {
-                    facingMode: ['environment', 'user'],
+                    // Using ideal: 'environment' allows the browser to pick the main rear camera,
+                    // avoiding the issue where deviceId forces it to select a macro or ultrawide lens.
+                    facingMode: { ideal: 'environment' },
                     width: { ideal: 320 },
                     height: { ideal: 240 },
                 };
-
-                try {
-                    const devices = await navigator.mediaDevices.enumerateDevices();
-                    const cameras = devices.filter(device => device.kind === 'videoinput');
-                    if (cameras.length > 0) {
-                        // Generally, the last camera is the back-facing one on mobile
-                        const camera = cameras[cameras.length - 1];
-                        videoConstraints.deviceId = camera.deviceId;
-                    }
-                } catch (e) {
-                    console.warn("Could not enumerate devices, using default constraints", e);
-                }
 
                 cameraStream = await navigator.mediaDevices.getUserMedia({
                     video: videoConstraints,
@@ -1022,7 +1012,7 @@
                 } catch (e) {
                     console.warn('Torch not available automatically:', e);
                 }
-                
+
                 // Show the manual torch button
                 dom.torchBtn.style.display = 'block';
                 dom.torchBtn.innerHTML = isTorchOn ? '<span class="btn-icon">🔦</span>Turn off Flashlight' : '<span class="btn-icon">🔦</span>Turn on Flashlight';
@@ -1084,17 +1074,17 @@
         async function toggleTorch() {
             if (!cameraStream) return;
             const videoTrack = cameraStream.getVideoTracks()[0];
-            
+
             try {
                 // Some browsers require getPhotoCapabilities before applying constraints
                 if (typeof ImageCapture !== 'undefined') {
                     const imageCapture = new ImageCapture(videoTrack);
-                    await imageCapture.getPhotoCapabilities().catch(() => {});
+                    await imageCapture.getPhotoCapabilities().catch(() => { });
                 }
-                
+
                 isTorchOn = !isTorchOn;
                 await videoTrack.applyConstraints({ advanced: [{ torch: isTorchOn }] });
-                
+
                 dom.torchBtn.innerHTML = isTorchOn ? '<span class="btn-icon">🔦</span>Turn off Flashlight' : '<span class="btn-icon">🔦</span>Turn on Flashlight';
                 dom.videoOverlayText.textContent = isTorchOn ? 'Camera & flash active' : 'Camera active (no flash)';
             } catch (e) {
