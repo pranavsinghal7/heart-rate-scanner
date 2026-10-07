@@ -1,0 +1,1547 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Heart Rate Scanner — Camera Pulse Monitor</title>
+    <meta name="description"
+        content="Measure your heart rate using your phone's rear camera and flash. Get real-time BPM readings with signal quality feedback." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet" />
+    <style>
+        /* ===== CSS Design System ===== */
+        :root {
+            --bg-primary: #515190;
+            --bg-secondary: #12121f;
+            --bg-card: #1a1a2e;
+            --bg-card-hover: #22223a;
+            --surface-glass: rgba(255, 255, 255, 0.04);
+            --surface-glass-border: rgba(255, 255, 255, 0.08);
+            --text-primary: #f0f0f5;
+            --text-secondary: #9a9ab0;
+            --text-muted: #5a5a72;
+            --accent-red: #ff4d6a;
+            --accent-red-glow: rgba(255, 77, 106, 0.35);
+            --accent-green: #34d399;
+            --accent-green-glow: rgba(52, 211, 153, 0.3);
+            --accent-amber: #fbbf24;
+            --accent-amber-glow: rgba(251, 191, 36, 0.3);
+            --accent-blue: #60a5fa;
+            --accent-purple: #a78bfa;
+            --gradient-heart: linear-gradient(135deg, #ff4d6a 0%, #ff8a5c 100%);
+            --gradient-card: linear-gradient(145deg, rgba(26, 26, 46, 0.8), rgba(18, 18, 31, 0.95));
+            --radius-sm: 0px;
+            --radius-md: 0px;
+            --radius-lg: 0px;
+            --radius-xl: 0px;
+            --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 4px rgba(0, 0, 0, 0.2);
+            --shadow-glow-red: 0 0 30px var(--accent-red-glow), 0 0 60px rgba(255, 77, 106, 0.15);
+            --shadow-glow-green: 0 0 20px var(--accent-green-glow);
+            --transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-smooth: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-bounce: 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Background ambient glow */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -40%;
+            left: -20%;
+            width: 140%;
+            height: 140%;
+            background:
+                radial-gradient(ellipse at 30% 20%, rgba(255, 77, 106, 0.06) 0%, transparent 60%),
+                radial-gradient(ellipse at 70% 80%, rgba(96, 165, 250, 0.04) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 50%, rgba(167, 139, 250, 0.03) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .app-container {
+            position: relative;
+            z-index: 1;
+            max-width: 480px;
+            margin: 0 auto;
+            padding: 24px 16px 40px;
+        }
+
+        /* ===== Header ===== */
+        .app-header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        .app-header h1 {
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            background: var(--gradient-heart);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 6px;
+        }
+
+        .app-header p {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            font-weight: 400;
+        }
+
+        /* ===== Glass Card ===== */
+        .card {
+            background: var(--gradient-card);
+            border: 1px solid var(--surface-glass-border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-card);
+            backdrop-filter: blur(16px);
+            padding: 24px;
+            margin-bottom: 20px;
+            transition: border-color var(--transition-fast);
+        }
+
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.12);
+        }
+
+        .card-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+
+        /* ===== Measure Button ===== */
+        .measure-btn {
+            width: 100%;
+            padding: 16px 24px;
+            border: none;
+            border-radius: var(--radius-md);
+            background: var(--gradient-heart);
+            color: #fff;
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+            box-shadow: 0 4px 20px var(--accent-red-glow);
+        }
+
+        .measure-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-glow-red);
+        }
+
+        .measure-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .measure-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .measure-btn .btn-icon {
+            margin-right: 8px;
+            font-size: 1.1rem;
+        }
+
+        /* Shimmer effect on button */
+        .measure-btn::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -60%;
+            width: 40%;
+            height: 200%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
+            transform: skewX(-25deg);
+            transition: left 0.6s ease;
+        }
+
+        .measure-btn:hover::after {
+            left: 120%;
+        }
+
+        /* Stop button variant */
+        .measure-btn.stop-btn {
+            background: linear-gradient(135deg, #444466, #333350);
+            box-shadow: none;
+        }
+
+        .measure-btn.stop-btn:hover:not(:disabled) {
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        }
+
+        /* ===== Camera Panel ===== */
+        .camera-panel {
+            display: none;
+            animation: fadeSlideIn 0.4s var(--transition-smooth) forwards;
+        }
+
+        .camera-panel.visible {
+            display: block;
+        }
+
+        @keyframes fadeSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* ===== Video Preview ===== */
+        .video-container {
+            position: relative;
+            width: 100%;
+            height: 120px;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            margin-bottom: 16px;
+            background: #000;
+        }
+
+        .video-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.7;
+        }
+
+        .video-overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.3);
+            pointer-events: none;
+        }
+
+        .video-overlay-text {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.7);
+            text-align: center;
+            padding: 0 16px;
+        }
+
+        /* ===== Finger Guidance ===== */
+        .finger-guide {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 16px;
+            border-radius: var(--radius-md);
+            background: rgba(251, 191, 36, 0.08);
+            border: 1px solid rgba(251, 191, 36, 0.2);
+            margin-bottom: 16px;
+            animation: pulseAmber 2s ease-in-out infinite;
+        }
+
+        .finger-guide.visible {
+            display: flex;
+        }
+
+        @keyframes pulseAmber {
+
+            0%,
+            100% {
+                border-color: rgba(251, 191, 36, 0.2);
+            }
+
+            50% {
+                border-color: rgba(251, 191, 36, 0.45);
+            }
+        }
+
+        .finger-guide-icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .finger-guide-text {
+            font-size: 0.82rem;
+            color: var(--accent-amber);
+            font-weight: 500;
+            line-height: 1.4;
+        }
+
+        /* ===== BPM Display ===== */
+        .bpm-display {
+            text-align: center;
+            padding: 24px 0 8px;
+        }
+
+        .bpm-value {
+            font-size: 4rem;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            line-height: 1;
+            background: var(--gradient-heart);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            transition: transform var(--transition-bounce);
+            display: inline-block;
+        }
+
+        .bpm-value.pulse-anim {
+            animation: bpmPulse 0.3s ease;
+        }
+
+        @keyframes bpmPulse {
+            0% {
+                transform: scale(1);
+            }
+
+            40% {
+                transform: scale(1.08);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .bpm-unit {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .bpm-placeholder {
+            font-size: 1.6rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.15em;
+        }
+
+        /* ===== Signal Quality Badge ===== */
+        .signal-quality {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 0;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            transition: all var(--transition-fast);
+        }
+
+        .signal-quality.quality-good {
+            background: rgba(52, 211, 153, 0.1);
+            border: 1px solid rgba(52, 211, 153, 0.3);
+            color: var(--accent-green);
+        }
+
+        .signal-quality.quality-fair {
+            background: rgba(251, 191, 36, 0.1);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            color: var(--accent-amber);
+        }
+
+        .signal-quality.quality-poor {
+            background: rgba(255, 77, 106, 0.1);
+            border: 1px solid rgba(255, 77, 106, 0.3);
+            color: var(--accent-red);
+        }
+
+        .signal-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: signalBlink 1.5s ease-in-out infinite;
+        }
+
+        @keyframes signalBlink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        /* ===== Waveform Canvas ===== */
+        .waveform-wrap {
+            position: relative;
+            width: 100%;
+            height: 120px;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--surface-glass-border);
+            margin-bottom: 16px;
+        }
+
+        .waveform-wrap canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* ===== Progress Bar ===== */
+        .progress-wrap {
+            margin-bottom: 16px;
+        }
+
+        .progress-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.72rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(255, 255, 255, 0.06);
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 2px;
+            background: var(--gradient-heart);
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        /* ===== Timer ===== */
+        .timer-text {
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+            margin-bottom: 12px;
+        }
+
+        /* ===== Status / Error Messages ===== */
+        .status-msg {
+            display: none;
+            padding: 14px 16px;
+            border-radius: var(--radius-md);
+            font-size: 0.82rem;
+            font-weight: 500;
+            line-height: 1.4;
+            margin-bottom: 16px;
+        }
+
+        .status-msg.visible {
+            display: block;
+        }
+
+        .status-msg.error {
+            background: rgba(255, 77, 106, 0.08);
+            border: 1px solid rgba(255, 77, 106, 0.2);
+            color: var(--accent-red);
+        }
+
+        .status-msg.info {
+            background: rgba(96, 165, 250, 0.08);
+            border: 1px solid rgba(96, 165, 250, 0.2);
+            color: var(--accent-blue);
+        }
+
+        .status-msg.success {
+            background: rgba(52, 211, 153, 0.08);
+            border: 1px solid rgba(52, 211, 153, 0.2);
+            color: var(--accent-green);
+        }
+
+        /* ===== Readings History ===== */
+        .readings-section {
+            margin-top: 8px;
+        }
+
+        .readings-list {
+            list-style: none;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+
+        .readings-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .readings-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .readings-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+
+        .reading-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateX(-8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .reading-item:last-child {
+            border-bottom: none;
+        }
+
+        .reading-bpm {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .reading-meta {
+            text-align: right;
+        }
+
+        .reading-type {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--accent-purple);
+        }
+
+        .reading-time {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        /* ===== Alert Banner ===== */
+        .alert-banner {
+            display: none;
+            padding: 14px 16px;
+            border-radius: var(--radius-md);
+            margin-bottom: 16px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            animation: alertSlide 0.4s ease;
+        }
+
+        @keyframes alertSlide {
+            from {
+                opacity: 0;
+                transform: translateY(-8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .alert-banner.visible {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .alert-banner.alert-high {
+            background: rgba(255, 77, 106, 0.1);
+            border: 1px solid rgba(255, 77, 106, 0.3);
+            color: var(--accent-red);
+        }
+
+        .alert-banner.alert-low {
+            background: rgba(96, 165, 250, 0.1);
+            border: 1px solid rgba(96, 165, 250, 0.3);
+            color: var(--accent-blue);
+        }
+
+        .alert-banner.alert-normal {
+            background: rgba(52, 211, 153, 0.1);
+            border: 1px solid rgba(52, 211, 153, 0.3);
+            color: var(--accent-green);
+        }
+
+        /* ===== Chart ===== */
+        .chart-wrap {
+            width: 100%;
+            height: 160px;
+            position: relative;
+        }
+
+        .chart-wrap canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* ===== Empty state ===== */
+        .empty-state {
+            text-align: center;
+            padding: 24px 0;
+            color: var(--text-muted);
+            font-size: 0.82rem;
+        }
+
+        .empty-state-icon {
+            font-size: 2rem;
+            margin-bottom: 8px;
+            opacity: 0.5;
+        }
+
+        /* ===== Responsive ===== */
+        @media (max-width: 360px) {
+            .app-container {
+                padding: 16px 10px 32px;
+            }
+
+            .bpm-value {
+                font-size: 3.2rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <h1>♡ Heart Rate Scanner</h1>
+            <p>Measure your pulse using your phone's camera</p>
+        </header>
+
+        <!-- Alert Banner -->
+        <div id="alertBanner" class="alert-banner">
+            <span id="alertIcon"></span>
+            <span id="alertText"></span>
+        </div>
+
+        <!-- Camera Pulse Card -->
+        <section class="card" id="cameraPulseCard">
+            <div class="card-title">📷 Camera Pulse</div>
+
+            <!-- Measure Button -->
+            <button id="measureBtn" class="measure-btn" onclick="startMeasurement()">
+                <span class="btn-icon">📸</span>Measure with phone camera
+            </button>
+
+            <!-- Camera Panel (hidden until active) -->
+            <div id="cameraPanel" class="camera-panel">
+                <!-- Status / Error Messages -->
+                <div id="statusMsg" class="status-msg"></div>
+
+                <!-- Finger Guidance -->
+                <div id="fingerGuide" class="finger-guide">
+                    <span class="finger-guide-icon">☝️</span>
+                    <span class="finger-guide-text">Cover the camera and flash with your fingertip. Press firmly and
+                        hold still.</span>
+                </div>
+
+                <!-- Video Preview -->
+                <div class="video-container">
+                    <video id="cameraVideo" autoplay playsinline muted></video>
+                    <div class="video-overlay">
+                        <span class="video-overlay-text" id="videoOverlayText">Initializing camera…</span>
+                    </div>
+                </div>
+
+                <!-- Signal Quality -->
+                <div style="text-align:center;">
+                    <div id="signalQuality" class="signal-quality quality-poor">
+                        <span class="signal-dot"></span>
+                        <span id="signalQualityText">Waiting for signal…</span>
+                    </div>
+                </div>
+
+                <!-- BPM Display -->
+                <div class="bpm-display">
+                    <div id="bpmValue" class="bpm-placeholder">— — —</div>
+                    <div class="bpm-unit" id="bpmUnit" style="display:none;">BPM</div>
+                </div>
+
+                <!-- Live Waveform -->
+                <div class="waveform-wrap">
+                    <canvas id="waveformCanvas"></canvas>
+                </div>
+
+                <!-- Progress -->
+                <div class="progress-wrap">
+                    <div class="progress-label">
+                        <span id="progressLabel">Collecting data…</span>
+                        <span id="progressTime">0s / 15s</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                </div>
+
+                <!-- Stop Button -->
+                <button id="stopBtn" class="measure-btn stop-btn" onclick="stopMeasurement()">
+                    ⏹ Stop Measurement
+                </button>
+            </div>
+        </section>
+
+        <!-- Readings History Card -->
+        <section class="card" id="readingsCard">
+            <div class="card-title">📊 Readings History</div>
+            <div class="chart-wrap">
+                <canvas id="historyChart"></canvas>
+            </div>
+            <ul class="readings-list" id="readingsList">
+                <li class="empty-state" id="emptyState">
+                    <div class="empty-state-icon">💓</div>
+                    No readings yet. Start a measurement!
+                </li>
+            </ul>
+        </section>
+    </div>
+
+    <!-- Hidden processing canvas -->
+    <canvas id="processCanvas" width="32" height="32" style="display:none;"></canvas>
+
+    <script>
+        // ============================================================
+        //  HEART RATE SCANNER — Full Implementation
+        // ============================================================
+
+        // ---- State ----
+        let readings = [];
+        let cameraStream = null;
+        let measuring = false;
+        let animFrameId = null;
+
+        // ---- Rules for alerts ----
+        const RULES = {
+            highThreshold: 100,
+            lowThreshold: 50,
+        };
+
+        // ---- DOM refs ----
+        const dom = {
+            measureBtn: document.getElementById('measureBtn'),
+            cameraPanel: document.getElementById('cameraPanel'),
+            statusMsg: document.getElementById('statusMsg'),
+            fingerGuide: document.getElementById('fingerGuide'),
+            video: document.getElementById('cameraVideo'),
+            videoOverlayText: document.getElementById('videoOverlayText'),
+            signalQuality: document.getElementById('signalQuality'),
+            signalQualityText: document.getElementById('signalQualityText'),
+            bpmValue: document.getElementById('bpmValue'),
+            bpmUnit: document.getElementById('bpmUnit'),
+            waveformCanvas: document.getElementById('waveformCanvas'),
+            progressFill: document.getElementById('progressFill'),
+            progressLabel: document.getElementById('progressLabel'),
+            progressTime: document.getElementById('progressTime'),
+            stopBtn: document.getElementById('stopBtn'),
+            processCanvas: document.getElementById('processCanvas'),
+            readingsList: document.getElementById('readingsList'),
+            emptyState: document.getElementById('emptyState'),
+            alertBanner: document.getElementById('alertBanner'),
+            alertIcon: document.getElementById('alertIcon'),
+            alertText: document.getElementById('alertText'),
+            historyChart: document.getElementById('historyChart'),
+        };
+
+        const processCtx = dom.processCanvas.getContext('2d', { willReadFrequently: true });
+
+        // ============================================================
+        //  READINGS / RULES / CHART / ALERTS
+        // ============================================================
+
+        function addReading(bpm, type = 'resting') {
+            const reading = {
+                bpm: Math.round(bpm),
+                type,
+                label: 'Camera pulse',
+                timestamp: Date.now(),
+            };
+            readings.push(reading);
+            renderReadingsList();
+            renderHistoryChart();
+            checkAlertRules(reading);
+        }
+
+        function checkAlertRules(reading) {
+            const el = dom.alertBanner;
+            if (reading.bpm > RULES.highThreshold) {
+                el.className = 'alert-banner alert-high visible';
+                dom.alertIcon.textContent = '⚠️';
+                dom.alertText.textContent = `High heart rate detected: ${reading.bpm} BPM (>${RULES.highThreshold})`;
+            } else if (reading.bpm < RULES.lowThreshold) {
+                el.className = 'alert-banner alert-low visible';
+                dom.alertIcon.textContent = 'ℹ️';
+                dom.alertText.textContent = `Low heart rate detected: ${reading.bpm} BPM (<${RULES.lowThreshold})`;
+            } else {
+                el.className = 'alert-banner alert-normal visible';
+                dom.alertIcon.textContent = '✅';
+                dom.alertText.textContent = `Normal heart rate: ${reading.bpm} BPM`;
+            }
+            // Auto-hide after 8 seconds
+            clearTimeout(el._hideTimer);
+            el._hideTimer = setTimeout(() => { el.classList.remove('visible'); }, 8000);
+        }
+
+        function renderReadingsList() {
+            if (readings.length === 0) {
+                dom.emptyState.style.display = '';
+                return;
+            }
+            dom.emptyState.style.display = 'none';
+            // Show most recent first, keep last 20
+            const recent = readings.slice(-20).reverse();
+            const items = recent.map(r => {
+                const t = new Date(r.timestamp);
+                const timeStr = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                return `<li class="reading-item">
+          <span class="reading-bpm">${r.bpm} <small style="font-size:0.6em;color:var(--text-muted);">BPM</small></span>
+          <span class="reading-meta">
+            <div class="reading-type">${r.label || r.type}</div>
+            <div class="reading-time">${timeStr}</div>
+          </span>
+        </li>`;
+            }).join('');
+            dom.readingsList.innerHTML = items;
+        }
+
+        function renderHistoryChart() {
+            const canvas = dom.historyChart;
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+            const W = rect.width;
+            const H = rect.height;
+
+            ctx.clearRect(0, 0, W, H);
+
+            if (readings.length < 2) {
+                ctx.fillStyle = 'rgba(255,255,255,0.08)';
+                ctx.font = '500 12px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Chart will appear after 2+ readings', W / 2, H / 2);
+                return;
+            }
+
+            const data = readings.slice(-30);
+            const bpms = data.map(r => r.bpm);
+            const minBpm = Math.min(...bpms) - 5;
+            const maxBpm = Math.max(...bpms) + 5;
+            const range = maxBpm - minBpm || 1;
+
+            const padX = 36, padY = 20;
+            const plotW = W - padX * 2;
+            const plotH = H - padY * 2;
+
+            // Grid lines
+            ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 4; i++) {
+                const y = padY + (plotH / 4) * i;
+                ctx.beginPath();
+                ctx.moveTo(padX, y);
+                ctx.lineTo(W - padX, y);
+                ctx.stroke();
+            }
+
+            // Line
+            ctx.beginPath();
+            const gradient = ctx.createLinearGradient(0, padY, 0, H - padY);
+            gradient.addColorStop(0, '#ff4d6a');
+            gradient.addColorStop(1, '#ff8a5c');
+            ctx.strokeStyle = gradient;
+            ctx.lineWidth = 2.5;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+
+            data.forEach((r, i) => {
+                const x = padX + (i / (data.length - 1)) * plotW;
+                const y = padY + plotH - ((r.bpm - minBpm) / range) * plotH;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+
+            // Dots
+            data.forEach((r, i) => {
+                const x = padX + (i / (data.length - 1)) * plotW;
+                const y = padY + plotH - ((r.bpm - minBpm) / range) * plotH;
+                ctx.beginPath();
+                ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+                ctx.fillStyle = '#ff4d6a';
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x, y, 2, 0, Math.PI * 2);
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+            });
+
+            // Y-axis labels
+            ctx.fillStyle = 'rgba(255,255,255,0.25)';
+            ctx.font = '500 10px Inter, sans-serif';
+            ctx.textAlign = 'right';
+            for (let i = 0; i <= 4; i++) {
+                const val = Math.round(minBpm + (range / 4) * (4 - i));
+                const y = padY + (plotH / 4) * i + 3;
+                ctx.fillText(val, padX - 6, y);
+            }
+        }
+
+        // ============================================================
+        //  CAMERA PULSE MEASUREMENT
+        // ============================================================
+
+        async function startMeasurement() {
+            if (measuring) return;
+
+            // Check for camera API
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showStatus('Your browser does not support camera access. Please use a modern mobile browser (Chrome, Safari, Firefox).', 'error');
+                showCameraPanel();
+                return;
+            }
+
+            measuring = true;
+            dom.measureBtn.disabled = true;
+            dom.measureBtn.innerHTML = '<span class="btn-icon">⏳</span>Starting camera…';
+            showCameraPanel();
+            resetCameraUI();
+
+            try {
+                // Request rear camera
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 320 },
+                        height: { ideal: 240 },
+                    },
+                    audio: false,
+                });
+
+                dom.video.srcObject = cameraStream;
+                await dom.video.play();
+
+                // Try to enable torch/flash
+                const videoTrack = cameraStream.getVideoTracks()[0];
+                let torchEnabled = false;
+                try {
+                    await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                    torchEnabled = true;
+                } catch (e) {
+                    console.warn('Torch not available:', e);
+                    showStatus('Flash/torch is not available on this device. Results may be less accurate. Ensure a bright light is near your fingertip.', 'info');
+                }
+
+                dom.videoOverlayText.textContent = torchEnabled
+                    ? 'Camera & flash active'
+                    : 'Camera active (no flash)';
+
+                dom.measureBtn.innerHTML = '<span class="btn-icon">📸</span>Measuring…';
+
+                // Start signal capture loop
+                runCapture(videoTrack, torchEnabled);
+            } catch (err) {
+                console.error('Camera error:', err);
+                let msg = 'Could not access the camera.';
+                if (err.name === 'NotAllowedError') {
+                    msg = 'Camera permission was denied. Please allow camera access in your browser settings and try again.';
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    msg = 'No camera found on this device. A rear-facing camera is required.';
+                } else if (err.name === 'NotReadableError') {
+                    msg = 'Camera is already in use by another app. Close other camera apps and try again.';
+                } else {
+                    msg += ` (${err.name}: ${err.message})`;
+                }
+                showStatus(msg, 'error');
+                cleanupCamera();
+            }
+        }
+
+        function stopMeasurement() {
+            measuring = false;
+            if (animFrameId) {
+                cancelAnimationFrame(animFrameId);
+                animFrameId = null;
+            }
+            cleanupCamera();
+            dom.measureBtn.disabled = false;
+            dom.measureBtn.innerHTML = '<span class="btn-icon">📸</span>Measure with phone camera';
+        }
+
+        function cleanupCamera() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(t => {
+                    // Turn off torch before stopping
+                    try { t.applyConstraints({ advanced: [{ torch: false }] }); } catch (e) { /* ignore */ }
+                    t.stop();
+                });
+                cameraStream = null;
+            }
+            dom.video.srcObject = null;
+            measuring = false;
+            dom.measureBtn.disabled = false;
+            dom.measureBtn.innerHTML = '<span class="btn-icon">📸</span>Measure with phone camera';
+        }
+
+        // ---- Capture loop ----
+        function runCapture(videoTrack, torchEnabled) {
+            const DURATION_MS = 18000;        // collect up to 18s of data
+            const MIN_ANALYSIS_MS = 10000;    // minimum 10s before trying to compute BPM
+            const DISPLAY_DURATION_S = 15;    // show "15s" to user
+            const REPORT_INTERVAL_MS = 5000;  // report every 5 seconds
+
+            const samples = [];    // { t: ms, r: number, g: number, b: number }
+            const startTime = performance.now();
+            let lastReportTime = 0;
+            let lastBpm = null;
+            let fingerDetected = false;
+
+            // Waveform canvas setup
+            const wfCanvas = dom.waveformCanvas;
+            const wfCtx = wfCanvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+
+            function resizeWaveformCanvas() {
+                const rect = wfCanvas.getBoundingClientRect();
+                wfCanvas.width = rect.width * dpr;
+                wfCanvas.height = rect.height * dpr;
+                wfCtx.scale(dpr, dpr);
+            }
+            resizeWaveformCanvas();
+
+            function captureTick() {
+                if (!measuring) return;
+
+                const now = performance.now();
+                const elapsed = now - startTime;
+
+                // ---- Sample frame ----
+                if (dom.video.readyState >= dom.video.HAVE_CURRENT_DATA) {
+                    processCtx.drawImage(dom.video, 0, 0, 32, 32);
+                    // Average center 16x16 region
+                    const imgData = processCtx.getImageData(8, 8, 16, 16);
+                    const d = imgData.data;
+                    let rSum = 0, gSum = 0, bSum = 0;
+                    const pixCount = 16 * 16;
+                    for (let i = 0; i < d.length; i += 4) {
+                        rSum += d[i];
+                        gSum += d[i + 1];
+                        bSum += d[i + 2];
+                    }
+                    const meanR = rSum / pixCount;
+                    const meanG = gSum / pixCount;
+                    const meanB = bSum / pixCount;
+                    samples.push({ t: elapsed, r: meanR, g: meanG, b: meanB });
+
+                    // ---- Finger detection ----
+                    // When a finger covers the camera + flash: high red, low green, low blue
+                    fingerDetected = (meanR > 80 && meanR > meanG * 1.5 && meanR > meanB * 1.5);
+
+                    if (!fingerDetected && elapsed < DURATION_MS - 2000) {
+                        dom.fingerGuide.classList.add('visible');
+                        setSignalQuality('poor', 'No finger detected');
+                    } else {
+                        dom.fingerGuide.classList.remove('visible');
+                    }
+                }
+
+                // ---- Progress ----
+                const progressPct = Math.min(100, (elapsed / (DISPLAY_DURATION_S * 1000)) * 100);
+                dom.progressFill.style.width = progressPct + '%';
+                const elapsedS = Math.floor(elapsed / 1000);
+                dom.progressTime.textContent = `${Math.min(elapsedS, DISPLAY_DURATION_S)}s / ${DISPLAY_DURATION_S}s`;
+                dom.progressLabel.textContent = elapsed < MIN_ANALYSIS_MS ? 'Collecting data…' : 'Analyzing signal…';
+
+                // ---- Analysis & BPM ----
+                let computedBpm = null;
+                let signalIsGood = false;
+
+                if (elapsed >= MIN_ANALYSIS_MS && samples.length > 60 && fingerDetected) {
+                    const result = analyzeSamples(samples);
+                    if (result) {
+                        computedBpm = result.bpm;
+                        signalIsGood = result.quality !== 'poor';
+
+                        if (computedBpm && signalIsGood) {
+                            lastBpm = computedBpm;
+                            showBpmValue(Math.round(computedBpm));
+                            setSignalQuality(result.quality, result.qualityLabel);
+                        } else if (result.quality === 'poor') {
+                            setSignalQuality('poor', result.qualityLabel || 'Noisy signal — hold still');
+                        }
+                    }
+                } else if (fingerDetected && elapsed > 3000) {
+                    setSignalQuality('fair', 'Collecting signal…');
+                }
+
+                // ---- Draw waveform ----
+                drawWaveform(wfCtx, wfCanvas, samples, dpr);
+
+                // ---- Report every 5s ----
+                if (lastBpm && signalIsGood && elapsed - lastReportTime >= REPORT_INTERVAL_MS) {
+                    lastReportTime = elapsed;
+                    addReading(lastBpm, 'resting');
+                }
+
+                // ---- Done? ----
+                if (elapsed >= DURATION_MS) {
+                    // Final report
+                    if (lastBpm && signalIsGood) {
+                        if (elapsed - lastReportTime > 1000) {
+                            addReading(lastBpm, 'resting');
+                        }
+                        showStatus(`Measurement complete! Your heart rate is approximately ${Math.round(lastBpm)} BPM.`, 'success');
+                    } else {
+                        showStatus('Could not get a reliable reading. Try again with firm finger pressure over the camera and flash.', 'error');
+                    }
+                    dom.progressLabel.textContent = 'Complete';
+                    dom.progressFill.style.width = '100%';
+                    cleanupCamera();
+                    return;
+                }
+
+                animFrameId = requestAnimationFrame(captureTick);
+            }
+
+            animFrameId = requestAnimationFrame(captureTick);
+        }
+
+        // ============================================================
+        //  SIGNAL ANALYSIS
+        // ============================================================
+
+        function analyzeSamples(samples) {
+            if (samples.length < 60) return null;
+
+            // Use red channel values
+            const rawValues = samples.map(s => s.r);
+            const times = samples.map(s => s.t);
+
+            // ---- Detrend: subtract a simple moving average (window ~1s) ----
+            const sampleRate = samples.length / ((times[times.length - 1] - times[0]) / 1000);
+            const windowSize = Math.max(3, Math.round(sampleRate * 1.0));
+            const smoothed = movingAverage(rawValues, windowSize);
+            const detrended = rawValues.map((v, i) => v - smoothed[i]);
+
+            // ---- Bandpass approximation via smoothing ----
+            // Light smoothing to reduce high-frequency noise
+            const filtered = movingAverage(detrended, 3);
+
+            // ---- Check signal variance / motion ----
+            const variance = computeVariance(filtered);
+            const rawVariance = computeVariance(rawValues);
+
+            // If raw values have huge variance, too much motion
+            if (rawVariance > 2000) {
+                return { bpm: null, quality: 'poor', qualityLabel: 'Too much motion — hold still' };
+            }
+
+            // If filtered signal has almost no variance, finger probably not there
+            if (variance < 0.01) {
+                return { bpm: null, quality: 'poor', qualityLabel: 'Signal too weak' };
+            }
+
+            // ---- FFT-based BPM estimation ----
+            const bpmFFT = computeBpmFFT(filtered, sampleRate);
+
+            // ---- Peak-based BPM estimation ----
+            const bpmPeaks = computeBpmPeaks(filtered, times);
+
+            // ---- Choose best estimate ----
+            let bpm = null;
+            let quality = 'poor';
+            let qualityLabel = 'Analyzing…';
+
+            if (bpmFFT && bpmPeaks) {
+                // If both agree within 15%, use average -> good signal
+                const diff = Math.abs(bpmFFT - bpmPeaks);
+                const avg = (bpmFFT + bpmPeaks) / 2;
+                if (diff / avg < 0.15) {
+                    bpm = avg;
+                    quality = 'good';
+                    qualityLabel = 'Strong signal';
+                } else if (diff / avg < 0.30) {
+                    bpm = bpmFFT; // Trust FFT more
+                    quality = 'fair';
+                    qualityLabel = 'Moderate signal';
+                } else {
+                    // Disagreement: use FFT if in range
+                    if (bpmFFT >= 42 && bpmFFT <= 200) {
+                        bpm = bpmFFT;
+                        quality = 'fair';
+                        qualityLabel = 'Weak signal — hold steady';
+                    }
+                }
+            } else if (bpmFFT) {
+                bpm = bpmFFT;
+                quality = 'fair';
+                qualityLabel = 'Moderate signal';
+            } else if (bpmPeaks) {
+                bpm = bpmPeaks;
+                quality = 'fair';
+                qualityLabel = 'Moderate signal';
+            }
+
+            // Final range check
+            if (bpm && (bpm < 40 || bpm > 210)) {
+                return { bpm: null, quality: 'poor', qualityLabel: 'Irregular signal' };
+            }
+
+            return { bpm, quality, qualityLabel };
+        }
+
+        // ---- FFT-based BPM (limited to 0.7–3.3 Hz = 42–198 BPM) ----
+        function computeBpmFFT(signal, sampleRate) {
+            // Zero-pad to next power of 2
+            const N = nextPow2(signal.length);
+            const re = new Float64Array(N);
+            const im = new Float64Array(N);
+
+            // Apply Hanning window
+            for (let i = 0; i < signal.length; i++) {
+                const w = 0.5 * (1 - Math.cos(2 * Math.PI * i / (signal.length - 1)));
+                re[i] = signal[i] * w;
+            }
+
+            fft(re, im);
+
+            // Compute power spectrum and find peak in 0.7–3.3 Hz
+            const freqRes = sampleRate / N;
+            const minBin = Math.floor(0.7 / freqRes);
+            const maxBin = Math.ceil(3.3 / freqRes);
+
+            let maxPower = 0;
+            let peakBin = -1;
+            for (let i = minBin; i <= maxBin && i < N / 2; i++) {
+                const power = re[i] * re[i] + im[i] * im[i];
+                if (power > maxPower) {
+                    maxPower = power;
+                    peakBin = i;
+                }
+            }
+
+            if (peakBin < 0) return null;
+
+            // Parabolic interpolation for sub-bin accuracy
+            let peakFreq = peakBin * freqRes;
+            if (peakBin > 0 && peakBin < N / 2 - 1) {
+                const alpha = re[(peakBin - 1)] * re[(peakBin - 1)] + im[(peakBin - 1)] * im[(peakBin - 1)];
+                const beta = maxPower;
+                const gamma = re[(peakBin + 1)] * re[(peakBin + 1)] + im[(peakBin + 1)] * im[(peakBin + 1)];
+                const p = 0.5 * (alpha - gamma) / (alpha - 2 * beta + gamma);
+                if (isFinite(p)) {
+                    peakFreq = (peakBin + p) * freqRes;
+                }
+            }
+
+            const bpm = peakFreq * 60;
+            return (bpm >= 42 && bpm <= 198) ? bpm : null;
+        }
+
+        // ---- Peak detection BPM ----
+        function computeBpmPeaks(signal, times) {
+            // Find peaks using a simple threshold + minimum distance
+            const peaks = [];
+            const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
+            const std = Math.sqrt(computeVariance(signal));
+            const threshold = mean + std * 0.3;
+
+            // Estimate samples per beat (~60-180bpm -> ~0.33-1s intervals)
+            const totalDuration = (times[times.length - 1] - times[0]) / 1000;
+            const approxSampleRate = signal.length / totalDuration;
+            const minPeakDist = Math.floor(approxSampleRate * 0.3); // min 0.3s between peaks
+
+            for (let i = 1; i < signal.length - 1; i++) {
+                if (signal[i] > threshold && signal[i] > signal[i - 1] && signal[i] >= signal[i + 1]) {
+                    if (peaks.length === 0 || i - peaks[peaks.length - 1] >= minPeakDist) {
+                        peaks.push(i);
+                    }
+                }
+            }
+
+            if (peaks.length < 3) return null;
+
+            // Compute intervals (in ms)
+            const intervals = [];
+            for (let i = 1; i < peaks.length; i++) {
+                const dt = times[peaks[i]] - times[peaks[i - 1]];
+                intervals.push(dt);
+            }
+
+            // Reject if intervals are too irregular (CV > 0.4)
+            const meanInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+            const intervalVar = intervals.reduce((a, b) => a + (b - meanInterval) ** 2, 0) / intervals.length;
+            const cv = Math.sqrt(intervalVar) / meanInterval;
+            if (cv > 0.4) return null;
+
+            // Use median interval for robustness
+            const sorted = [...intervals].sort((a, b) => a - b);
+            const medianInterval = sorted[Math.floor(sorted.length / 2)];
+
+            const bpm = 60000 / medianInterval;
+            return (bpm >= 40 && bpm <= 210) ? bpm : null;
+        }
+
+        // ---- Simple Cooley-Tukey FFT (radix-2, in-place) ----
+        function fft(re, im) {
+            const N = re.length;
+            if (N <= 1) return;
+
+            // Bit-reversal permutation
+            for (let i = 1, j = 0; i < N; i++) {
+                let bit = N >> 1;
+                for (; j & bit; bit >>= 1) {
+                    j ^= bit;
+                }
+                j ^= bit;
+                if (i < j) {
+                    [re[i], re[j]] = [re[j], re[i]];
+                    [im[i], im[j]] = [im[j], im[i]];
+                }
+            }
+
+            for (let len = 2; len <= N; len <<= 1) {
+                const halfLen = len >> 1;
+                const angle = -2 * Math.PI / len;
+                const wRe = Math.cos(angle);
+                const wIm = Math.sin(angle);
+                for (let i = 0; i < N; i += len) {
+                    let curRe = 1, curIm = 0;
+                    for (let j = 0; j < halfLen; j++) {
+                        const tRe = curRe * re[i + j + halfLen] - curIm * im[i + j + halfLen];
+                        const tIm = curRe * im[i + j + halfLen] + curIm * re[i + j + halfLen];
+                        re[i + j + halfLen] = re[i + j] - tRe;
+                        im[i + j + halfLen] = im[i + j] - tIm;
+                        re[i + j] += tRe;
+                        im[i + j] += tIm;
+                        const newCurRe = curRe * wRe - curIm * wIm;
+                        curIm = curRe * wIm + curIm * wRe;
+                        curRe = newCurRe;
+                    }
+                }
+            }
+        }
+
+        function nextPow2(n) {
+            let p = 1;
+            while (p < n) p <<= 1;
+            return p;
+        }
+
+        // ---- Utilities ----
+        function movingAverage(arr, windowSize) {
+            const result = new Array(arr.length);
+            const half = Math.floor(windowSize / 2);
+            for (let i = 0; i < arr.length; i++) {
+                let sum = 0, count = 0;
+                for (let j = Math.max(0, i - half); j <= Math.min(arr.length - 1, i + half); j++) {
+                    sum += arr[j];
+                    count++;
+                }
+                result[i] = sum / count;
+            }
+            return result;
+        }
+
+        function computeVariance(arr) {
+            const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+            return arr.reduce((sum, v) => sum + (v - mean) ** 2, 0) / arr.length;
+        }
+
+        // ============================================================
+        //  WAVEFORM DRAWING
+        // ============================================================
+
+        function drawWaveform(ctx, canvas, samples, dpr) {
+            const W = canvas.width / dpr;
+            const H = canvas.height / dpr;
+
+            ctx.clearRect(0, 0, W, H);
+
+            // Background grid
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+            ctx.lineWidth = 1;
+            for (let y = H * 0.25; y < H; y += H * 0.25) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(W, y);
+                ctx.stroke();
+            }
+
+            if (samples.length < 10) {
+                ctx.fillStyle = 'rgba(255,255,255,0.08)';
+                ctx.font = '500 11px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Waveform will appear here…', W / 2, H / 2);
+                return;
+            }
+
+            // Show last 5 seconds of data
+            const now = samples[samples.length - 1].t;
+            const windowStart = now - 5000;
+            const windowSamples = samples.filter(s => s.t >= windowStart);
+
+            if (windowSamples.length < 5) return;
+
+            // Detrend for display
+            const rawVals = windowSamples.map(s => s.r);
+            const smoothVals = movingAverage(rawVals, Math.max(3, Math.round(rawVals.length / 5)));
+            const displayVals = rawVals.map((v, i) => v - smoothVals[i]);
+
+            const min = Math.min(...displayVals);
+            const max = Math.max(...displayVals);
+            const range = max - min || 1;
+
+            const padX = 6, padY = 12;
+            const plotW = W - padX * 2;
+            const plotH = H - padY * 2;
+
+            // Gradient fill under curve
+            const grad = ctx.createLinearGradient(0, padY, 0, H - padY);
+            grad.addColorStop(0, 'rgba(255, 77, 106, 0.25)');
+            grad.addColorStop(1, 'rgba(255, 77, 106, 0.0)');
+
+            // Draw fill
+            ctx.beginPath();
+            ctx.moveTo(padX, H - padY);
+            displayVals.forEach((v, i) => {
+                const x = padX + (i / (displayVals.length - 1)) * plotW;
+                const y = padY + plotH - ((v - min) / range) * plotH;
+                ctx.lineTo(x, y);
+            });
+            ctx.lineTo(padX + plotW, H - padY);
+            ctx.closePath();
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            // Draw line
+            ctx.beginPath();
+            const lineGrad = ctx.createLinearGradient(0, 0, W, 0);
+            lineGrad.addColorStop(0, '#ff4d6a');
+            lineGrad.addColorStop(0.5, '#ff6b7d');
+            lineGrad.addColorStop(1, '#ff8a5c');
+            ctx.strokeStyle = lineGrad;
+            ctx.lineWidth = 2;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+
+            displayVals.forEach((v, i) => {
+                const x = padX + (i / (displayVals.length - 1)) * plotW;
+                const y = padY + plotH - ((v - min) / range) * plotH;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+
+            // Glow effect on the latest point
+            const lastX = padX + plotW;
+            const lastY = padY + plotH - ((displayVals[displayVals.length - 1] - min) / range) * plotH;
+            ctx.beginPath();
+            ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+            ctx.fillStyle = '#ff4d6a';
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(lastX, lastY, 8, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 77, 106, 0.2)';
+            ctx.fill();
+        }
+
+        // ============================================================
+        //  UI HELPERS
+        // ============================================================
+
+        function showCameraPanel() {
+            dom.cameraPanel.classList.add('visible');
+        }
+
+        function resetCameraUI() {
+            dom.statusMsg.className = 'status-msg';
+            dom.statusMsg.textContent = '';
+            dom.fingerGuide.classList.remove('visible');
+            dom.signalQuality.className = 'signal-quality quality-poor';
+            dom.signalQualityText.textContent = 'Waiting for signal…';
+            dom.bpmValue.className = 'bpm-placeholder';
+            dom.bpmValue.textContent = '— — —';
+            dom.bpmUnit.style.display = 'none';
+            dom.progressFill.style.width = '0%';
+            dom.progressTime.textContent = '0s / 15s';
+            dom.progressLabel.textContent = 'Initializing…';
+            dom.videoOverlayText.textContent = 'Initializing camera…';
+        }
+
+        function showBpmValue(bpm) {
+            dom.bpmValue.className = 'bpm-value';
+            dom.bpmValue.textContent = bpm;
+            dom.bpmUnit.style.display = '';
+            // Trigger pulse animation
+            dom.bpmValue.classList.remove('pulse-anim');
+            void dom.bpmValue.offsetWidth; // reflow
+            dom.bpmValue.classList.add('pulse-anim');
+        }
+
+        function setSignalQuality(level, text) {
+            dom.signalQuality.className = `signal-quality quality-${level}`;
+            dom.signalQualityText.textContent = text;
+        }
+
+        function showStatus(msg, type = 'info') {
+            dom.statusMsg.className = `status-msg ${type} visible`;
+            dom.statusMsg.textContent = msg;
+        }
+
+        // ---- Init ----
+        renderReadingsList();
+        renderHistoryChart();
+        window.addEventListener('resize', renderHistoryChart);
+    </script>
+</body>
+
+</html>
