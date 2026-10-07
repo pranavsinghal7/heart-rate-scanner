@@ -957,12 +957,26 @@
 
             try {
                 // Request rear camera
+                let videoConstraints = {
+                    facingMode: ['environment', 'user'],
+                    width: { ideal: 320 },
+                    height: { ideal: 240 },
+                };
+
+                try {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const cameras = devices.filter(device => device.kind === 'videoinput');
+                    if (cameras.length > 0) {
+                        // Generally, the last camera is the back-facing one on mobile
+                        const camera = cameras[cameras.length - 1];
+                        videoConstraints.deviceId = camera.deviceId;
+                    }
+                } catch (e) {
+                    console.warn("Could not enumerate devices, using default constraints", e);
+                }
+
                 cameraStream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: 'environment',
-                        width: { ideal: 320 },
-                        height: { ideal: 240 },
-                    },
+                    video: videoConstraints,
                     audio: false,
                 });
 
@@ -977,16 +991,14 @@
                 await new Promise(resolve => setTimeout(resolve, 500));
 
                 try {
-                    // Check if the track actually supports torch before applying
-                    const capabilities = videoTrack.getCapabilities && videoTrack.getCapabilities();
-                    if (capabilities && capabilities.torch) {
-                        await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
-                        torchEnabled = true;
-                    } else {
-                        // Fallback attempt for browsers that don't report capabilities properly
-                        await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
-                        torchEnabled = true;
+                    // Create image capture object and get camera capabilities to initialize torch support on some browsers
+                    if (typeof ImageCapture !== 'undefined') {
+                        const imageCapture = new ImageCapture(videoTrack);
+                        await imageCapture.getPhotoCapabilities().catch(() => { });
                     }
+
+                    await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                    torchEnabled = true;
                 } catch (e) {
                     console.warn('Torch not available:', e);
                     showStatus('Flash/torch is not available on this device or browser. Results may be less accurate. Ensure a bright light is near your fingertip.', 'info');
