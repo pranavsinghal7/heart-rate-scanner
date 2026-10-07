@@ -977,18 +977,18 @@
             try {
                 // Step 1: Request basic rear camera to trigger permission prompt (populates device labels)
                 let tempStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-                
+
                 // Step 2: Enumerate devices now that we have permissions and labels
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const videoDevices = devices.filter(d => d.kind === 'videoinput');
-                
+
                 let mainCameraId = null;
                 // Find all cameras with 'back' or 'environment' in the label
-                const backCameras = videoDevices.filter(d => 
-                    d.label.toLowerCase().includes('back') || 
+                const backCameras = videoDevices.filter(d =>
+                    d.label.toLowerCase().includes('back') ||
                     d.label.toLowerCase().includes('environment')
                 );
-                
+
                 if (backCameras.length > 0) {
                     // The primary main camera is almost always the FIRST one in the list (e.g., "camera 0")
                     mainCameraId = backCameras[0].deviceId;
@@ -1006,7 +1006,7 @@
                     width: { ideal: 320 },
                     height: { ideal: 240 },
                 };
-                
+
                 if (mainCameraId) {
                     videoConstraints.deviceId = { exact: mainCameraId };
                 } else {
@@ -1028,13 +1028,17 @@
                 // Some devices need a moment after the video starts before the torch can be activated
                 await new Promise(resolve => setTimeout(resolve, 500));
 
-                try {
-                    // Create image capture object and get camera capabilities to initialize torch support on some browsers
-                    if (typeof ImageCapture !== 'undefined') {
+                // Pre-warm the torch capability (required on some Android Chrome versions)
+                if (typeof ImageCapture !== 'undefined') {
+                    try {
                         const imageCapture = new ImageCapture(videoTrack);
-                        await imageCapture.getPhotoCapabilities().catch(() => { });
+                        await imageCapture.getPhotoCapabilities();
+                    } catch (e) {
+                        console.warn('ImageCapture pre-warm failed:', e);
                     }
+                }
 
+                try {
                     await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
                     torchEnabled = true;
                     isTorchOn = true;
@@ -1100,541 +1104,538 @@
             dom.measureBtn.innerHTML = '<span class="btn-icon">📸</span>Measure with phone camera';
         }
 
-        async function toggleTorch() {
+        // We do NOT use async/await here to preserve the "user gesture" context.
+        // Some browsers block hardware access if the event handler is delayed by promises.
+        function toggleTorch() {
             if (!cameraStream) return;
             const videoTrack = cameraStream.getVideoTracks()[0];
 
-            try {
-                // Some browsers require getPhotoCapabilities before applying constraints
-                if (typeof ImageCapture !== 'undefined') {
-                    const imageCapture = new ImageCapture(videoTrack);
-                    await imageCapture.getPhotoCapabilities().catch(() => { });
+            isTorchOn = !isTorchOn;
+
+            // Apply constraints synchronously in response to the user click
+            videoTrack.applyConstraints({ advanced: [{ torch: isTorchOn }] })
+                .then(() => {
+                    dom.torchBtn.innerHTML = isTorchOn ? '<span class="btn-icon">🔦</span>Turn off Flashlight' : '<span class="btn-icon">🔦</span>Turn on Flashlight';
+                    dom.videoOverlayText.textContent = isTorchOn ? 'Camera & flash active' : 'Camera active (no flash)';
+                })
+                .catch((e) => {
+                    console.warn('Torch toggle failed:', e);
+                    showStatus('Cannot toggle flashlight manually. Your device or browser may block it.', 'error');
+                    isTorchOn = false;
+                    dom.torchBtn.innerHTML = '<span class="btn-icon">🔦</span>Turn on Flashlight';
+                    dom.videoOverlayText.textContent = 'Camera active (no flash)';
                 }
-
-                isTorchOn = !isTorchOn;
-                await videoTrack.applyConstraints({ advanced: [{ torch: isTorchOn }] });
-
-                dom.torchBtn.innerHTML = isTorchOn ? '<span class="btn-icon">🔦</span>Turn off Flashlight' : '<span class="btn-icon">🔦</span>Turn on Flashlight';
-                dom.videoOverlayText.textContent = isTorchOn ? 'Camera & flash active' : 'Camera active (no flash)';
-            } catch (e) {
-                console.warn('Torch toggle failed:', e);
-                showStatus('Cannot toggle flashlight manually. Your device or browser may block it.', 'error');
-                isTorchOn = false;
-                dom.torchBtn.innerHTML = '<span class="btn-icon">🔦</span>Turn on Flashlight';
-                dom.videoOverlayText.textContent = 'Camera active (no flash)';
-            }
-        }
 
         // ---- Capture loop ----
         function runCapture(videoTrack, torchEnabled) {
-            const DURATION_MS = 18000;        // collect up to 18s of data
-            const MIN_ANALYSIS_MS = 10000;    // minimum 10s before trying to compute BPM
-            const DISPLAY_DURATION_S = 15;    // show "15s" to user
-            const REPORT_INTERVAL_MS = 5000;  // report every 5 seconds
+                        const DURATION_MS = 18000;        // collect up to 18s of data
+                        const MIN_ANALYSIS_MS = 10000;    // minimum 10s before trying to compute BPM
+                        const DISPLAY_DURATION_S = 15;    // show "15s" to user
+                        const REPORT_INTERVAL_MS = 5000;  // report every 5 seconds
 
-            const samples = [];    // { t: ms, r: number, g: number, b: number }
-            const startTime = performance.now();
-            let lastReportTime = 0;
-            let lastBpm = null;
-            let fingerDetected = false;
+                        const samples = [];    // { t: ms, r: number, g: number, b: number }
+                        const startTime = performance.now();
+                        let lastReportTime = 0;
+                        let lastBpm = null;
+                        let fingerDetected = false;
 
-            // Waveform canvas setup
-            const wfCanvas = dom.waveformCanvas;
-            const wfCtx = wfCanvas.getContext('2d');
-            const dpr = window.devicePixelRatio || 1;
+                        // Waveform canvas setup
+                        const wfCanvas = dom.waveformCanvas;
+                        const wfCtx = wfCanvas.getContext('2d');
+                        const dpr = window.devicePixelRatio || 1;
 
-            function resizeWaveformCanvas() {
-                const rect = wfCanvas.getBoundingClientRect();
-                wfCanvas.width = rect.width * dpr;
-                wfCanvas.height = rect.height * dpr;
-                wfCtx.scale(dpr, dpr);
-            }
-            resizeWaveformCanvas();
-
-            function captureTick() {
-                if (!measuring) return;
-
-                const now = performance.now();
-                const elapsed = now - startTime;
-
-                // ---- Sample frame ----
-                if (dom.video.readyState >= dom.video.HAVE_CURRENT_DATA) {
-                    processCtx.drawImage(dom.video, 0, 0, 32, 32);
-                    // Average center 16x16 region
-                    const imgData = processCtx.getImageData(8, 8, 16, 16);
-                    const d = imgData.data;
-                    let rSum = 0, gSum = 0, bSum = 0;
-                    const pixCount = 16 * 16;
-                    for (let i = 0; i < d.length; i += 4) {
-                        rSum += d[i];
-                        gSum += d[i + 1];
-                        bSum += d[i + 2];
-                    }
-                    const meanR = rSum / pixCount;
-                    const meanG = gSum / pixCount;
-                    const meanB = bSum / pixCount;
-                    samples.push({ t: elapsed, r: meanR, g: meanG, b: meanB });
-
-                    // ---- Finger detection ----
-                    // When a finger covers the camera + flash: high red, low green, low blue
-                    fingerDetected = (meanR > 80 && meanR > meanG * 1.5 && meanR > meanB * 1.5);
-
-                    if (!fingerDetected && elapsed < DURATION_MS - 2000) {
-                        dom.fingerGuide.classList.add('visible');
-                        setSignalQuality('poor', 'No finger detected');
-                    } else {
-                        dom.fingerGuide.classList.remove('visible');
-                    }
-                }
-
-                // ---- Progress ----
-                const progressPct = Math.min(100, (elapsed / (DISPLAY_DURATION_S * 1000)) * 100);
-                dom.progressFill.style.width = progressPct + '%';
-                const elapsedS = Math.floor(elapsed / 1000);
-                dom.progressTime.textContent = `${Math.min(elapsedS, DISPLAY_DURATION_S)}s / ${DISPLAY_DURATION_S}s`;
-                dom.progressLabel.textContent = elapsed < MIN_ANALYSIS_MS ? 'Collecting data…' : 'Analyzing signal…';
-
-                // ---- Analysis & BPM ----
-                let computedBpm = null;
-                let signalIsGood = false;
-
-                if (elapsed >= MIN_ANALYSIS_MS && samples.length > 60 && fingerDetected) {
-                    const result = analyzeSamples(samples);
-                    if (result) {
-                        computedBpm = result.bpm;
-                        signalIsGood = result.quality !== 'poor';
-
-                        if (computedBpm && signalIsGood) {
-                            lastBpm = computedBpm;
-                            showBpmValue(Math.round(computedBpm));
-                            setSignalQuality(result.quality, result.qualityLabel);
-                        } else if (result.quality === 'poor') {
-                            setSignalQuality('poor', result.qualityLabel || 'Noisy signal — hold still');
+                        function resizeWaveformCanvas() {
+                            const rect = wfCanvas.getBoundingClientRect();
+                            wfCanvas.width = rect.width * dpr;
+                            wfCanvas.height = rect.height * dpr;
+                            wfCtx.scale(dpr, dpr);
                         }
-                    }
-                } else if (fingerDetected && elapsed > 3000) {
-                    setSignalQuality('fair', 'Collecting signal…');
-                }
+                        resizeWaveformCanvas();
 
-                // ---- Draw waveform ----
-                drawWaveform(wfCtx, wfCanvas, samples, dpr);
+                        function captureTick() {
+                            if (!measuring) return;
 
-                // ---- Report every 5s ----
-                if (lastBpm && signalIsGood && elapsed - lastReportTime >= REPORT_INTERVAL_MS) {
-                    lastReportTime = elapsed;
-                    addReading(lastBpm, 'resting');
-                }
+                            const now = performance.now();
+                            const elapsed = now - startTime;
 
-                // ---- Done? ----
-                if (elapsed >= DURATION_MS) {
-                    // Final report
-                    if (lastBpm && signalIsGood) {
-                        if (elapsed - lastReportTime > 1000) {
-                            addReading(lastBpm, 'resting');
+                            // ---- Sample frame ----
+                            if (dom.video.readyState >= dom.video.HAVE_CURRENT_DATA) {
+                                processCtx.drawImage(dom.video, 0, 0, 32, 32);
+                                // Average center 16x16 region
+                                const imgData = processCtx.getImageData(8, 8, 16, 16);
+                                const d = imgData.data;
+                                let rSum = 0, gSum = 0, bSum = 0;
+                                const pixCount = 16 * 16;
+                                for (let i = 0; i < d.length; i += 4) {
+                                    rSum += d[i];
+                                    gSum += d[i + 1];
+                                    bSum += d[i + 2];
+                                }
+                                const meanR = rSum / pixCount;
+                                const meanG = gSum / pixCount;
+                                const meanB = bSum / pixCount;
+                                samples.push({ t: elapsed, r: meanR, g: meanG, b: meanB });
+
+                                // ---- Finger detection ----
+                                // When a finger covers the camera + flash: high red, low green, low blue
+                                fingerDetected = (meanR > 80 && meanR > meanG * 1.5 && meanR > meanB * 1.5);
+
+                                if (!fingerDetected && elapsed < DURATION_MS - 2000) {
+                                    dom.fingerGuide.classList.add('visible');
+                                    setSignalQuality('poor', 'No finger detected');
+                                } else {
+                                    dom.fingerGuide.classList.remove('visible');
+                                }
+                            }
+
+                            // ---- Progress ----
+                            const progressPct = Math.min(100, (elapsed / (DISPLAY_DURATION_S * 1000)) * 100);
+                            dom.progressFill.style.width = progressPct + '%';
+                            const elapsedS = Math.floor(elapsed / 1000);
+                            dom.progressTime.textContent = `${Math.min(elapsedS, DISPLAY_DURATION_S)}s / ${DISPLAY_DURATION_S}s`;
+                            dom.progressLabel.textContent = elapsed < MIN_ANALYSIS_MS ? 'Collecting data…' : 'Analyzing signal…';
+
+                            // ---- Analysis & BPM ----
+                            let computedBpm = null;
+                            let signalIsGood = false;
+
+                            if (elapsed >= MIN_ANALYSIS_MS && samples.length > 60 && fingerDetected) {
+                                const result = analyzeSamples(samples);
+                                if (result) {
+                                    computedBpm = result.bpm;
+                                    signalIsGood = result.quality !== 'poor';
+
+                                    if (computedBpm && signalIsGood) {
+                                        lastBpm = computedBpm;
+                                        showBpmValue(Math.round(computedBpm));
+                                        setSignalQuality(result.quality, result.qualityLabel);
+                                    } else if (result.quality === 'poor') {
+                                        setSignalQuality('poor', result.qualityLabel || 'Noisy signal — hold still');
+                                    }
+                                }
+                            } else if (fingerDetected && elapsed > 3000) {
+                                setSignalQuality('fair', 'Collecting signal…');
+                            }
+
+                            // ---- Draw waveform ----
+                            drawWaveform(wfCtx, wfCanvas, samples, dpr);
+
+                            // ---- Report every 5s ----
+                            if (lastBpm && signalIsGood && elapsed - lastReportTime >= REPORT_INTERVAL_MS) {
+                                lastReportTime = elapsed;
+                                addReading(lastBpm, 'resting');
+                            }
+
+                            // ---- Done? ----
+                            if (elapsed >= DURATION_MS) {
+                                // Final report
+                                if (lastBpm && signalIsGood) {
+                                    if (elapsed - lastReportTime > 1000) {
+                                        addReading(lastBpm, 'resting');
+                                    }
+                                    showStatus(`Measurement complete! Your heart rate is approximately ${Math.round(lastBpm)} BPM.`, 'success');
+                                } else {
+                                    showStatus('Could not get a reliable reading. Try again with firm finger pressure over the camera and flash.', 'error');
+                                }
+                                dom.progressLabel.textContent = 'Complete';
+                                dom.progressFill.style.width = '100%';
+                                cleanupCamera();
+                                return;
+                            }
+
+                            animFrameId = requestAnimationFrame(captureTick);
                         }
-                        showStatus(`Measurement complete! Your heart rate is approximately ${Math.round(lastBpm)} BPM.`, 'success');
-                    } else {
-                        showStatus('Could not get a reliable reading. Try again with firm finger pressure over the camera and flash.', 'error');
+
+                        animFrameId = requestAnimationFrame(captureTick);
                     }
-                    dom.progressLabel.textContent = 'Complete';
-                    dom.progressFill.style.width = '100%';
-                    cleanupCamera();
-                    return;
-                }
-
-                animFrameId = requestAnimationFrame(captureTick);
-            }
-
-            animFrameId = requestAnimationFrame(captureTick);
-        }
 
         // ============================================================
         //  SIGNAL ANALYSIS
         // ============================================================
 
         function analyzeSamples(samples) {
-            if (samples.length < 60) return null;
+                        if (samples.length < 60) return null;
 
-            // Use red channel values
-            const rawValues = samples.map(s => s.r);
-            const times = samples.map(s => s.t);
+                        // Use red channel values
+                        const rawValues = samples.map(s => s.r);
+                        const times = samples.map(s => s.t);
 
-            // ---- Detrend: subtract a simple moving average (window ~1s) ----
-            const sampleRate = samples.length / ((times[times.length - 1] - times[0]) / 1000);
-            const windowSize = Math.max(3, Math.round(sampleRate * 1.0));
-            const smoothed = movingAverage(rawValues, windowSize);
-            const detrended = rawValues.map((v, i) => v - smoothed[i]);
+                        // ---- Detrend: subtract a simple moving average (window ~1s) ----
+                        const sampleRate = samples.length / ((times[times.length - 1] - times[0]) / 1000);
+                        const windowSize = Math.max(3, Math.round(sampleRate * 1.0));
+                        const smoothed = movingAverage(rawValues, windowSize);
+                        const detrended = rawValues.map((v, i) => v - smoothed[i]);
 
-            // ---- Bandpass approximation via smoothing ----
-            // Light smoothing to reduce high-frequency noise
-            const filtered = movingAverage(detrended, 3);
+                        // ---- Bandpass approximation via smoothing ----
+                        // Light smoothing to reduce high-frequency noise
+                        const filtered = movingAverage(detrended, 3);
 
-            // ---- Check signal variance / motion ----
-            const variance = computeVariance(filtered);
-            const rawVariance = computeVariance(rawValues);
+                        // ---- Check signal variance / motion ----
+                        const variance = computeVariance(filtered);
+                        const rawVariance = computeVariance(rawValues);
 
-            // If raw values have huge variance, too much motion
-            if (rawVariance > 2000) {
-                return { bpm: null, quality: 'poor', qualityLabel: 'Too much motion — hold still' };
-            }
+                        // If raw values have huge variance, too much motion
+                        if (rawVariance > 2000) {
+                            return { bpm: null, quality: 'poor', qualityLabel: 'Too much motion — hold still' };
+                        }
 
-            // If filtered signal has almost no variance, finger probably not there
-            if (variance < 0.01) {
-                return { bpm: null, quality: 'poor', qualityLabel: 'Signal too weak' };
-            }
+                        // If filtered signal has almost no variance, finger probably not there
+                        if (variance < 0.01) {
+                            return { bpm: null, quality: 'poor', qualityLabel: 'Signal too weak' };
+                        }
 
-            // ---- FFT-based BPM estimation ----
-            const bpmFFT = computeBpmFFT(filtered, sampleRate);
+                        // ---- FFT-based BPM estimation ----
+                        const bpmFFT = computeBpmFFT(filtered, sampleRate);
 
-            // ---- Peak-based BPM estimation ----
-            const bpmPeaks = computeBpmPeaks(filtered, times);
+                        // ---- Peak-based BPM estimation ----
+                        const bpmPeaks = computeBpmPeaks(filtered, times);
 
-            // ---- Choose best estimate ----
-            let bpm = null;
-            let quality = 'poor';
-            let qualityLabel = 'Analyzing…';
+                        // ---- Choose best estimate ----
+                        let bpm = null;
+                        let quality = 'poor';
+                        let qualityLabel = 'Analyzing…';
 
-            if (bpmFFT && bpmPeaks) {
-                // If both agree within 15%, use average -> good signal
-                const diff = Math.abs(bpmFFT - bpmPeaks);
-                const avg = (bpmFFT + bpmPeaks) / 2;
-                if (diff / avg < 0.15) {
-                    bpm = avg;
-                    quality = 'good';
-                    qualityLabel = 'Strong signal';
-                } else if (diff / avg < 0.30) {
-                    bpm = bpmFFT; // Trust FFT more
-                    quality = 'fair';
-                    qualityLabel = 'Moderate signal';
-                } else {
-                    // Disagreement: use FFT if in range
-                    if (bpmFFT >= 42 && bpmFFT <= 200) {
-                        bpm = bpmFFT;
-                        quality = 'fair';
-                        qualityLabel = 'Weak signal — hold steady';
+                        if (bpmFFT && bpmPeaks) {
+                            // If both agree within 15%, use average -> good signal
+                            const diff = Math.abs(bpmFFT - bpmPeaks);
+                            const avg = (bpmFFT + bpmPeaks) / 2;
+                            if (diff / avg < 0.15) {
+                                bpm = avg;
+                                quality = 'good';
+                                qualityLabel = 'Strong signal';
+                            } else if (diff / avg < 0.30) {
+                                bpm = bpmFFT; // Trust FFT more
+                                quality = 'fair';
+                                qualityLabel = 'Moderate signal';
+                            } else {
+                                // Disagreement: use FFT if in range
+                                if (bpmFFT >= 42 && bpmFFT <= 200) {
+                                    bpm = bpmFFT;
+                                    quality = 'fair';
+                                    qualityLabel = 'Weak signal — hold steady';
+                                }
+                            }
+                        } else if (bpmFFT) {
+                            bpm = bpmFFT;
+                            quality = 'fair';
+                            qualityLabel = 'Moderate signal';
+                        } else if (bpmPeaks) {
+                            bpm = bpmPeaks;
+                            quality = 'fair';
+                            qualityLabel = 'Moderate signal';
+                        }
+
+                        // Final range check
+                        if (bpm && (bpm < 40 || bpm > 210)) {
+                            return { bpm: null, quality: 'poor', qualityLabel: 'Irregular signal' };
+                        }
+
+                        return { bpm, quality, qualityLabel };
                     }
-                }
-            } else if (bpmFFT) {
-                bpm = bpmFFT;
-                quality = 'fair';
-                qualityLabel = 'Moderate signal';
-            } else if (bpmPeaks) {
-                bpm = bpmPeaks;
-                quality = 'fair';
-                qualityLabel = 'Moderate signal';
-            }
-
-            // Final range check
-            if (bpm && (bpm < 40 || bpm > 210)) {
-                return { bpm: null, quality: 'poor', qualityLabel: 'Irregular signal' };
-            }
-
-            return { bpm, quality, qualityLabel };
-        }
 
         // ---- FFT-based BPM (limited to 0.7–3.3 Hz = 42–198 BPM) ----
         function computeBpmFFT(signal, sampleRate) {
-            // Zero-pad to next power of 2
-            const N = nextPow2(signal.length);
-            const re = new Float64Array(N);
-            const im = new Float64Array(N);
+                        // Zero-pad to next power of 2
+                        const N = nextPow2(signal.length);
+                        const re = new Float64Array(N);
+                        const im = new Float64Array(N);
 
-            // Apply Hanning window
-            for (let i = 0; i < signal.length; i++) {
-                const w = 0.5 * (1 - Math.cos(2 * Math.PI * i / (signal.length - 1)));
-                re[i] = signal[i] * w;
-            }
+                        // Apply Hanning window
+                        for (let i = 0; i < signal.length; i++) {
+                            const w = 0.5 * (1 - Math.cos(2 * Math.PI * i / (signal.length - 1)));
+                            re[i] = signal[i] * w;
+                        }
 
-            fft(re, im);
+                        fft(re, im);
 
-            // Compute power spectrum and find peak in 0.7–3.3 Hz
-            const freqRes = sampleRate / N;
-            const minBin = Math.floor(0.7 / freqRes);
-            const maxBin = Math.ceil(3.3 / freqRes);
+                        // Compute power spectrum and find peak in 0.7–3.3 Hz
+                        const freqRes = sampleRate / N;
+                        const minBin = Math.floor(0.7 / freqRes);
+                        const maxBin = Math.ceil(3.3 / freqRes);
 
-            let maxPower = 0;
-            let peakBin = -1;
-            for (let i = minBin; i <= maxBin && i < N / 2; i++) {
-                const power = re[i] * re[i] + im[i] * im[i];
-                if (power > maxPower) {
-                    maxPower = power;
-                    peakBin = i;
-                }
-            }
+                        let maxPower = 0;
+                        let peakBin = -1;
+                        for (let i = minBin; i <= maxBin && i < N / 2; i++) {
+                            const power = re[i] * re[i] + im[i] * im[i];
+                            if (power > maxPower) {
+                                maxPower = power;
+                                peakBin = i;
+                            }
+                        }
 
-            if (peakBin < 0) return null;
+                        if (peakBin < 0) return null;
 
-            // Parabolic interpolation for sub-bin accuracy
-            let peakFreq = peakBin * freqRes;
-            if (peakBin > 0 && peakBin < N / 2 - 1) {
-                const alpha = re[(peakBin - 1)] * re[(peakBin - 1)] + im[(peakBin - 1)] * im[(peakBin - 1)];
-                const beta = maxPower;
-                const gamma = re[(peakBin + 1)] * re[(peakBin + 1)] + im[(peakBin + 1)] * im[(peakBin + 1)];
-                const p = 0.5 * (alpha - gamma) / (alpha - 2 * beta + gamma);
-                if (isFinite(p)) {
-                    peakFreq = (peakBin + p) * freqRes;
-                }
-            }
+                        // Parabolic interpolation for sub-bin accuracy
+                        let peakFreq = peakBin * freqRes;
+                        if (peakBin > 0 && peakBin < N / 2 - 1) {
+                            const alpha = re[(peakBin - 1)] * re[(peakBin - 1)] + im[(peakBin - 1)] * im[(peakBin - 1)];
+                            const beta = maxPower;
+                            const gamma = re[(peakBin + 1)] * re[(peakBin + 1)] + im[(peakBin + 1)] * im[(peakBin + 1)];
+                            const p = 0.5 * (alpha - gamma) / (alpha - 2 * beta + gamma);
+                            if (isFinite(p)) {
+                                peakFreq = (peakBin + p) * freqRes;
+                            }
+                        }
 
-            const bpm = peakFreq * 60;
-            return (bpm >= 42 && bpm <= 198) ? bpm : null;
-        }
+                        const bpm = peakFreq * 60;
+                        return (bpm >= 42 && bpm <= 198) ? bpm : null;
+                    }
 
         // ---- Peak detection BPM ----
         function computeBpmPeaks(signal, times) {
-            // Find peaks using a simple threshold + minimum distance
-            const peaks = [];
-            const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
-            const std = Math.sqrt(computeVariance(signal));
-            const threshold = mean + std * 0.3;
+                        // Find peaks using a simple threshold + minimum distance
+                        const peaks = [];
+                        const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
+                        const std = Math.sqrt(computeVariance(signal));
+                        const threshold = mean + std * 0.3;
 
-            // Estimate samples per beat (~60-180bpm -> ~0.33-1s intervals)
-            const totalDuration = (times[times.length - 1] - times[0]) / 1000;
-            const approxSampleRate = signal.length / totalDuration;
-            const minPeakDist = Math.floor(approxSampleRate * 0.3); // min 0.3s between peaks
+                        // Estimate samples per beat (~60-180bpm -> ~0.33-1s intervals)
+                        const totalDuration = (times[times.length - 1] - times[0]) / 1000;
+                        const approxSampleRate = signal.length / totalDuration;
+                        const minPeakDist = Math.floor(approxSampleRate * 0.3); // min 0.3s between peaks
 
-            for (let i = 1; i < signal.length - 1; i++) {
-                if (signal[i] > threshold && signal[i] > signal[i - 1] && signal[i] >= signal[i + 1]) {
-                    if (peaks.length === 0 || i - peaks[peaks.length - 1] >= minPeakDist) {
-                        peaks.push(i);
+                        for (let i = 1; i < signal.length - 1; i++) {
+                            if (signal[i] > threshold && signal[i] > signal[i - 1] && signal[i] >= signal[i + 1]) {
+                                if (peaks.length === 0 || i - peaks[peaks.length - 1] >= minPeakDist) {
+                                    peaks.push(i);
+                                }
+                            }
+                        }
+
+                        if (peaks.length < 3) return null;
+
+                        // Compute intervals (in ms)
+                        const intervals = [];
+                        for (let i = 1; i < peaks.length; i++) {
+                            const dt = times[peaks[i]] - times[peaks[i - 1]];
+                            intervals.push(dt);
+                        }
+
+                        // Reject if intervals are too irregular (CV > 0.4)
+                        const meanInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+                        const intervalVar = intervals.reduce((a, b) => a + (b - meanInterval) ** 2, 0) / intervals.length;
+                        const cv = Math.sqrt(intervalVar) / meanInterval;
+                        if (cv > 0.4) return null;
+
+                        // Use median interval for robustness
+                        const sorted = [...intervals].sort((a, b) => a - b);
+                        const medianInterval = sorted[Math.floor(sorted.length / 2)];
+
+                        const bpm = 60000 / medianInterval;
+                        return (bpm >= 40 && bpm <= 210) ? bpm : null;
                     }
-                }
-            }
-
-            if (peaks.length < 3) return null;
-
-            // Compute intervals (in ms)
-            const intervals = [];
-            for (let i = 1; i < peaks.length; i++) {
-                const dt = times[peaks[i]] - times[peaks[i - 1]];
-                intervals.push(dt);
-            }
-
-            // Reject if intervals are too irregular (CV > 0.4)
-            const meanInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-            const intervalVar = intervals.reduce((a, b) => a + (b - meanInterval) ** 2, 0) / intervals.length;
-            const cv = Math.sqrt(intervalVar) / meanInterval;
-            if (cv > 0.4) return null;
-
-            // Use median interval for robustness
-            const sorted = [...intervals].sort((a, b) => a - b);
-            const medianInterval = sorted[Math.floor(sorted.length / 2)];
-
-            const bpm = 60000 / medianInterval;
-            return (bpm >= 40 && bpm <= 210) ? bpm : null;
-        }
 
         // ---- Simple Cooley-Tukey FFT (radix-2, in-place) ----
         function fft(re, im) {
-            const N = re.length;
-            if (N <= 1) return;
+                        const N = re.length;
+                        if (N <= 1) return;
 
-            // Bit-reversal permutation
-            for (let i = 1, j = 0; i < N; i++) {
-                let bit = N >> 1;
-                for (; j & bit; bit >>= 1) {
-                    j ^= bit;
-                }
-                j ^= bit;
-                if (i < j) {
-                    [re[i], re[j]] = [re[j], re[i]];
-                    [im[i], im[j]] = [im[j], im[i]];
-                }
-            }
+                        // Bit-reversal permutation
+                        for (let i = 1, j = 0; i < N; i++) {
+                            let bit = N >> 1;
+                            for (; j & bit; bit >>= 1) {
+                                j ^= bit;
+                            }
+                            j ^= bit;
+                            if (i < j) {
+                                [re[i], re[j]] = [re[j], re[i]];
+                                [im[i], im[j]] = [im[j], im[i]];
+                            }
+                        }
 
-            for (let len = 2; len <= N; len <<= 1) {
-                const halfLen = len >> 1;
-                const angle = -2 * Math.PI / len;
-                const wRe = Math.cos(angle);
-                const wIm = Math.sin(angle);
-                for (let i = 0; i < N; i += len) {
-                    let curRe = 1, curIm = 0;
-                    for (let j = 0; j < halfLen; j++) {
-                        const tRe = curRe * re[i + j + halfLen] - curIm * im[i + j + halfLen];
-                        const tIm = curRe * im[i + j + halfLen] + curIm * re[i + j + halfLen];
-                        re[i + j + halfLen] = re[i + j] - tRe;
-                        im[i + j + halfLen] = im[i + j] - tIm;
-                        re[i + j] += tRe;
-                        im[i + j] += tIm;
-                        const newCurRe = curRe * wRe - curIm * wIm;
-                        curIm = curRe * wIm + curIm * wRe;
-                        curRe = newCurRe;
+                        for (let len = 2; len <= N; len <<= 1) {
+                            const halfLen = len >> 1;
+                            const angle = -2 * Math.PI / len;
+                            const wRe = Math.cos(angle);
+                            const wIm = Math.sin(angle);
+                            for (let i = 0; i < N; i += len) {
+                                let curRe = 1, curIm = 0;
+                                for (let j = 0; j < halfLen; j++) {
+                                    const tRe = curRe * re[i + j + halfLen] - curIm * im[i + j + halfLen];
+                                    const tIm = curRe * im[i + j + halfLen] + curIm * re[i + j + halfLen];
+                                    re[i + j + halfLen] = re[i + j] - tRe;
+                                    im[i + j + halfLen] = im[i + j] - tIm;
+                                    re[i + j] += tRe;
+                                    im[i + j] += tIm;
+                                    const newCurRe = curRe * wRe - curIm * wIm;
+                                    curIm = curRe * wIm + curIm * wRe;
+                                    curRe = newCurRe;
+                                }
+                            }
+                        }
                     }
-                }
-            }
-        }
 
         function nextPow2(n) {
-            let p = 1;
-            while (p < n) p <<= 1;
-            return p;
-        }
+                        let p = 1;
+                        while (p < n) p <<= 1;
+                        return p;
+                    }
 
         // ---- Utilities ----
         function movingAverage(arr, windowSize) {
-            const result = new Array(arr.length);
-            const half = Math.floor(windowSize / 2);
-            for (let i = 0; i < arr.length; i++) {
-                let sum = 0, count = 0;
-                for (let j = Math.max(0, i - half); j <= Math.min(arr.length - 1, i + half); j++) {
-                    sum += arr[j];
-                    count++;
-                }
-                result[i] = sum / count;
-            }
-            return result;
-        }
+                        const result = new Array(arr.length);
+                        const half = Math.floor(windowSize / 2);
+                        for (let i = 0; i < arr.length; i++) {
+                            let sum = 0, count = 0;
+                            for (let j = Math.max(0, i - half); j <= Math.min(arr.length - 1, i + half); j++) {
+                                sum += arr[j];
+                                count++;
+                            }
+                            result[i] = sum / count;
+                        }
+                        return result;
+                    }
 
         function computeVariance(arr) {
-            const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
-            return arr.reduce((sum, v) => sum + (v - mean) ** 2, 0) / arr.length;
-        }
+                        const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+                        return arr.reduce((sum, v) => sum + (v - mean) ** 2, 0) / arr.length;
+                    }
 
         // ============================================================
         //  WAVEFORM DRAWING
         // ============================================================
 
         function drawWaveform(ctx, canvas, samples, dpr) {
-            const W = canvas.width / dpr;
-            const H = canvas.height / dpr;
+                        const W = canvas.width / dpr;
+                        const H = canvas.height / dpr;
 
-            ctx.clearRect(0, 0, W, H);
+                        ctx.clearRect(0, 0, W, H);
 
-            // Background grid
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
-            ctx.lineWidth = 1;
-            for (let y = H * 0.25; y < H; y += H * 0.25) {
-                ctx.beginPath();
-                ctx.moveTo(0, y);
-                ctx.lineTo(W, y);
-                ctx.stroke();
-            }
+                        // Background grid
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+                        ctx.lineWidth = 1;
+                        for (let y = H * 0.25; y < H; y += H * 0.25) {
+                            ctx.beginPath();
+                            ctx.moveTo(0, y);
+                            ctx.lineTo(W, y);
+                            ctx.stroke();
+                        }
 
-            if (samples.length < 10) {
-                ctx.fillStyle = 'rgba(255,255,255,0.08)';
-                ctx.font = '500 11px Inter, sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText('Waveform will appear here…', W / 2, H / 2);
-                return;
-            }
+                        if (samples.length < 10) {
+                            ctx.fillStyle = 'rgba(255,255,255,0.08)';
+                            ctx.font = '500 11px Inter, sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('Waveform will appear here…', W / 2, H / 2);
+                            return;
+                        }
 
-            // Show last 5 seconds of data
-            const now = samples[samples.length - 1].t;
-            const windowStart = now - 5000;
-            const windowSamples = samples.filter(s => s.t >= windowStart);
+                        // Show last 5 seconds of data
+                        const now = samples[samples.length - 1].t;
+                        const windowStart = now - 5000;
+                        const windowSamples = samples.filter(s => s.t >= windowStart);
 
-            if (windowSamples.length < 5) return;
+                        if (windowSamples.length < 5) return;
 
-            // Detrend for display
-            const rawVals = windowSamples.map(s => s.r);
-            const smoothVals = movingAverage(rawVals, Math.max(3, Math.round(rawVals.length / 5)));
-            const displayVals = rawVals.map((v, i) => v - smoothVals[i]);
+                        // Detrend for display
+                        const rawVals = windowSamples.map(s => s.r);
+                        const smoothVals = movingAverage(rawVals, Math.max(3, Math.round(rawVals.length / 5)));
+                        const displayVals = rawVals.map((v, i) => v - smoothVals[i]);
 
-            const min = Math.min(...displayVals);
-            const max = Math.max(...displayVals);
-            const range = max - min || 1;
+                        const min = Math.min(...displayVals);
+                        const max = Math.max(...displayVals);
+                        const range = max - min || 1;
 
-            const padX = 6, padY = 12;
-            const plotW = W - padX * 2;
-            const plotH = H - padY * 2;
+                        const padX = 6, padY = 12;
+                        const plotW = W - padX * 2;
+                        const plotH = H - padY * 2;
 
-            // Gradient fill under curve
-            const grad = ctx.createLinearGradient(0, padY, 0, H - padY);
-            grad.addColorStop(0, 'rgba(255, 77, 106, 0.25)');
-            grad.addColorStop(1, 'rgba(255, 77, 106, 0.0)');
+                        // Gradient fill under curve
+                        const grad = ctx.createLinearGradient(0, padY, 0, H - padY);
+                        grad.addColorStop(0, 'rgba(255, 77, 106, 0.25)');
+                        grad.addColorStop(1, 'rgba(255, 77, 106, 0.0)');
 
-            // Draw fill
-            ctx.beginPath();
-            ctx.moveTo(padX, H - padY);
-            displayVals.forEach((v, i) => {
-                const x = padX + (i / (displayVals.length - 1)) * plotW;
-                const y = padY + plotH - ((v - min) / range) * plotH;
-                ctx.lineTo(x, y);
-            });
-            ctx.lineTo(padX + plotW, H - padY);
-            ctx.closePath();
-            ctx.fillStyle = grad;
-            ctx.fill();
+                        // Draw fill
+                        ctx.beginPath();
+                        ctx.moveTo(padX, H - padY);
+                        displayVals.forEach((v, i) => {
+                            const x = padX + (i / (displayVals.length - 1)) * plotW;
+                            const y = padY + plotH - ((v - min) / range) * plotH;
+                            ctx.lineTo(x, y);
+                        });
+                        ctx.lineTo(padX + plotW, H - padY);
+                        ctx.closePath();
+                        ctx.fillStyle = grad;
+                        ctx.fill();
 
-            // Draw line
-            ctx.beginPath();
-            const lineGrad = ctx.createLinearGradient(0, 0, W, 0);
-            lineGrad.addColorStop(0, '#ff4d6a');
-            lineGrad.addColorStop(0.5, '#ff6b7d');
-            lineGrad.addColorStop(1, '#ff8a5c');
-            ctx.strokeStyle = lineGrad;
-            ctx.lineWidth = 2;
-            ctx.lineJoin = 'round';
-            ctx.lineCap = 'round';
+                        // Draw line
+                        ctx.beginPath();
+                        const lineGrad = ctx.createLinearGradient(0, 0, W, 0);
+                        lineGrad.addColorStop(0, '#ff4d6a');
+                        lineGrad.addColorStop(0.5, '#ff6b7d');
+                        lineGrad.addColorStop(1, '#ff8a5c');
+                        ctx.strokeStyle = lineGrad;
+                        ctx.lineWidth = 2;
+                        ctx.lineJoin = 'round';
+                        ctx.lineCap = 'round';
 
-            displayVals.forEach((v, i) => {
-                const x = padX + (i / (displayVals.length - 1)) * plotW;
-                const y = padY + plotH - ((v - min) / range) * plotH;
-                if (i === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
-            });
-            ctx.stroke();
+                        displayVals.forEach((v, i) => {
+                            const x = padX + (i / (displayVals.length - 1)) * plotW;
+                            const y = padY + plotH - ((v - min) / range) * plotH;
+                            if (i === 0) ctx.moveTo(x, y);
+                            else ctx.lineTo(x, y);
+                        });
+                        ctx.stroke();
 
-            // Glow effect on the latest point
-            const lastX = padX + plotW;
-            const lastY = padY + plotH - ((displayVals[displayVals.length - 1] - min) / range) * plotH;
-            ctx.beginPath();
-            ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
-            ctx.fillStyle = '#ff4d6a';
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(lastX, lastY, 8, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(255, 77, 106, 0.2)';
-            ctx.fill();
-        }
+                        // Glow effect on the latest point
+                        const lastX = padX + plotW;
+                        const lastY = padY + plotH - ((displayVals[displayVals.length - 1] - min) / range) * plotH;
+                        ctx.beginPath();
+                        ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+                        ctx.fillStyle = '#ff4d6a';
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(lastX, lastY, 8, 0, Math.PI * 2);
+                        ctx.fillStyle = 'rgba(255, 77, 106, 0.2)';
+                        ctx.fill();
+                    }
 
         // ============================================================
         //  UI HELPERS
         // ============================================================
 
         function showCameraPanel() {
-            dom.cameraPanel.classList.add('visible');
-        }
+                        dom.cameraPanel.classList.add('visible');
+                    }
 
         function resetCameraUI() {
-            dom.statusMsg.className = 'status-msg';
-            dom.statusMsg.textContent = '';
-            dom.fingerGuide.classList.remove('visible');
-            dom.signalQuality.className = 'signal-quality quality-poor';
-            dom.signalQualityText.textContent = 'Waiting for signal…';
-            dom.bpmValue.className = 'bpm-placeholder';
-            dom.bpmValue.textContent = '— — —';
-            dom.bpmUnit.style.display = 'none';
-            dom.progressFill.style.width = '0%';
-            dom.progressTime.textContent = '0s / 15s';
-            dom.progressLabel.textContent = 'Initializing…';
-            dom.videoOverlayText.textContent = 'Initializing camera…';
-        }
+                        dom.statusMsg.className = 'status-msg';
+                        dom.statusMsg.textContent = '';
+                        dom.fingerGuide.classList.remove('visible');
+                        dom.signalQuality.className = 'signal-quality quality-poor';
+                        dom.signalQualityText.textContent = 'Waiting for signal…';
+                        dom.bpmValue.className = 'bpm-placeholder';
+                        dom.bpmValue.textContent = '— — —';
+                        dom.bpmUnit.style.display = 'none';
+                        dom.progressFill.style.width = '0%';
+                        dom.progressTime.textContent = '0s / 15s';
+                        dom.progressLabel.textContent = 'Initializing…';
+                        dom.videoOverlayText.textContent = 'Initializing camera…';
+                    }
 
         function showBpmValue(bpm) {
-            dom.bpmValue.className = 'bpm-value';
-            dom.bpmValue.textContent = bpm;
-            dom.bpmUnit.style.display = '';
-            // Trigger pulse animation
-            dom.bpmValue.classList.remove('pulse-anim');
-            void dom.bpmValue.offsetWidth; // reflow
-            dom.bpmValue.classList.add('pulse-anim');
-        }
+                        dom.bpmValue.className = 'bpm-value';
+                        dom.bpmValue.textContent = bpm;
+                        dom.bpmUnit.style.display = '';
+                        // Trigger pulse animation
+                        dom.bpmValue.classList.remove('pulse-anim');
+                        void dom.bpmValue.offsetWidth; // reflow
+                        dom.bpmValue.classList.add('pulse-anim');
+                    }
 
         function setSignalQuality(level, text) {
-            dom.signalQuality.className = `signal-quality quality-${level}`;
-            dom.signalQualityText.textContent = text;
-        }
+                        dom.signalQuality.className = `signal-quality quality-${level}`;
+                        dom.signalQualityText.textContent = text;
+                    }
 
         function showStatus(msg, type = 'info') {
-            dom.statusMsg.className = `status-msg ${type} visible`;
-            dom.statusMsg.textContent = msg;
-        }
+                        dom.statusMsg.className = `status-msg ${type} visible`;
+                        dom.statusMsg.textContent = msg;
+                    }
 
         // ---- Init ----
         renderReadingsList();
-        renderHistoryChart();
-        window.addEventListener('resize', renderHistoryChart);
+            renderHistoryChart();
+            window.addEventListener('resize', renderHistoryChart);
     </script>
 </body>
 
