@@ -975,6 +975,7 @@
             resetCameraUI();
 
             try {
+<<<<<<< HEAD
                 // Step 1: Request basic rear camera to trigger permission prompt (populates device labels)
                 let tempStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
 
@@ -1013,8 +1014,15 @@
                     videoConstraints.facingMode = { ideal: 'environment' };
                 }
 
+=======
+                // Request rear camera
+>>>>>>> parent of 2d26518 (third commit)
                 cameraStream = await navigator.mediaDevices.getUserMedia({
-                    video: videoConstraints,
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 320 },
+                        height: { ideal: 240 },
+                    },
                     audio: false,
                 });
 
@@ -1028,6 +1036,7 @@
                 // Some devices need a moment after the video starts before the torch can be activated
                 await new Promise(resolve => setTimeout(resolve, 500));
 
+<<<<<<< HEAD
                 // Pre-warm the torch capability (required on some Android Chrome versions)
                 if (typeof ImageCapture !== 'undefined') {
                     try {
@@ -1042,6 +1051,19 @@
                     await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
                     torchEnabled = true;
                     isTorchOn = true;
+=======
+                try {
+                    // Check if the track actually supports torch before applying
+                    const capabilities = videoTrack.getCapabilities && videoTrack.getCapabilities();
+                    if (capabilities && capabilities.torch) {
+                        await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                        torchEnabled = true;
+                    } else {
+                        // Fallback attempt for browsers that don't report capabilities properly
+                        await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                        torchEnabled = true;
+                    }
+>>>>>>> parent of 2d26518 (third commit)
                 } catch (e) {
                     console.warn('Torch not available automatically:', e);
                 }
